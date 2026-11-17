@@ -16,6 +16,9 @@
   .nums span { font-size:13px; color:#93a3b3; }
   #tap { flex:1; border:none; border-radius:24px; background:#22a0c8; color:#fff; font-size:34px; font-weight:800; font-family:inherit; line-height:1.4; touch-action:manipulation; }
   #tap.flash { background:#7fe3ff; color:#06323f; }
+  #msg { border-radius:14px; padding:12px; text-align:center; font-size:20px; font-weight:700; line-height:1.5; background:#26313d; color:#ffd84a; }
+  #msg.done { background:#1f9d55; color:#fff; font-size:22px; }
+  #msg small { display:block; font-size:14px; font-weight:500; }
   .hint { font-size:13px; color:#93a3b3; text-align:center; line-height:1.6; }
 </style>
 </head>
@@ -26,8 +29,9 @@
     <div><b id="iv">--</b><span>前回からの秒数</span></div>
     <div><b id="cnt">0</b><span>押した回数</span></div>
   </div>
+  <div id="msg">学生がバッグを押すのに合わせて<br>タップしてください</div>
   <button id="tap">学生がバッグを<br>押したら タップ</button>
-  <p class="hint">最初の2分ほど押してもらえば、そのリズムを覚えて、あとはモニターが<b>自動で続けます</b>（押すのをやめてよい）。途中でまた押すと合わせ直します。10回/分なら6秒に1回。<br>先生のiPadで「呼吸数の出し方：スマホで記録」を選んでおいてください。</p>
+  <p class="hint">緑の「もう押さなくて大丈夫です」が出るまで（6回ほど）押してもらえば、そのリズムを覚えて、あとはモニターが<b>自動で続けます</b>（押すのをやめてよい）。途中でまた押すと合わせ直します。10回/分なら6秒に1回。<br>先生のiPadで「呼吸数の出し方：スマホで記録」を選んでおいてください。</p>
 <script src="js/supabase.js"></script>
 <script src="js/config.js"></script>
 <script src="js/common.js"></script>
@@ -47,7 +51,22 @@
     if (!iv.length) return '--';
     return Math.round(60000 / (iv.reduce((a, b) => a + b, 0) / iv.length));
   }
+  // 何回押せばリズムを覚えたとみなすか：6回（間隔5つ）押して、間隔のばらつきが小さいこと
+  const NEED = 6;
+  function learned() {
+    const iv = [];
+    for (let i = taps.length - 1; i >= 1 && iv.length < 5; i--) { const d = taps[i] - taps[i - 1]; if (d >= 1500 && d <= 20000) iv.push(d); }
+    if (iv.length < NEED - 1) return { ok: false, left: NEED - 1 - iv.length };
+    const mean = iv.reduce((a, b) => a + b, 0) / iv.length;
+    const sd = Math.sqrt(iv.reduce((a, b) => a + (b - mean) * (b - mean), 0) / iv.length);
+    return { ok: sd / mean < 0.3, left: 0, steady: sd / mean < 0.3 };
+  }
   function show() {
+    const L = learned(); const m = $('msg');
+    if (L.ok) { m.className = 'done'; m.innerHTML = '✓ もう押さなくて大丈夫です<small>このリズム（' + rr() + '回/分）でモニターが自動で続けます。ペースが変わったら、また押してください</small>'; }
+    else if (!taps.length) { m.className = ''; m.innerHTML = '学生がバッグを押すのに合わせて<br>タップしてください'; }
+    else if (L.left > 0) { m.className = ''; m.innerHTML = 'あと ' + L.left + ' 回押してください<small>リズムを覚えています</small>'; }
+    else { m.className = ''; m.innerHTML = 'もう少し押してください<small>間隔がばらついているので、そろうまで続けてください</small>'; }
     $('rr').textContent = rr();
     $('iv').textContent = taps.length ? ((Date.now() - taps[taps.length - 1]) / 1000).toFixed(0) : '--';
     $('cnt').textContent = count;
