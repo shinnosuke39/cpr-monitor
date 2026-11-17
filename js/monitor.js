@@ -58,8 +58,8 @@
     // 心臓マッサージ
     if (S.compressing) {
       if (t >= nextComp) {
-        const period = 60 / Math.max(60, S.cprRate || 110) * (1 + rnd(-0.08, 0.08));
-        comps.push({ t: Math.max(nextComp, t - 0.05), period, a: rnd(0.8, 1.5) });
+        const period = 60 / Math.max(60, S.cprRate || 110) * (1 + rnd(-0.03, 0.03));
+        comps.push({ t: Math.max(nextComp, t - 0.05), period, a: rnd(1.0, 1.2) });
         nextComp = t + period;
         compBeep();
       }
@@ -97,11 +97,12 @@
         const k = comps[i]; const x = t - k.t;
         if (x < 0) continue; if (x > k.period * 1.5) break;
         const ph = x / k.period;
-        c += ph < 0.45 ? k.a * Math.sin(Math.PI * ph / 0.45) * 1.15 : -0.35 * k.a * Math.exp(-(ph - 0.45) * 4) * Math.sin(Math.PI * Math.min(1, (ph - 0.45) * 3));
-        if (x < 0.03) c += k.a * 0.9 * (1 - x / 0.03) * (k.a > 1.2 ? -1 : 1); // 押した瞬間のトゲ
+        c += ph < 0.45 ? k.a * Math.sin(Math.PI * ph / 0.45) * 0.82 : -0.35 * k.a * Math.exp(-(ph - 0.45) * 4) * Math.sin(Math.PI * Math.min(1, (ph - 0.45) * 3));
+        if (x < 0.03) c += 0.5 * (1 - x / 0.03); // 押した瞬間のトゲ
       }
-      const jam = 0.16 * Math.sin(2 * Math.PI * 31 * t + 3 * Math.sin(5 * t)) + 0.1 * Math.sin(2 * Math.PI * 47 * t) + rnd(-0.14, 0.14);
-      v = v * 0.3 + c + jam + 0.25 * Math.sin(2 * Math.PI * 0.4 * t) + 0.12 * Math.sin(2 * Math.PI * 1.7 * t);
+      // 圧迫と同じ周期の規則的な大きい波に、少しの乱れと基線のゆれ（文献：救急 p.19、PMC3607813）
+      const jam = 0.05 * Math.sin(2 * Math.PI * 31 * t + 3 * Math.sin(5 * t)) + rnd(-0.05, 0.05);
+      v = v * 0.25 + c + jam + 0.12 * Math.sin(2 * Math.PI * 0.4 * t);
       v = Math.max(-1.2, Math.min(1.15, v)); // 振り切れ
     }
     return v + rnd(-0.008, 0.008);
@@ -296,8 +297,9 @@
   function compBeep() {
     // 圧迫のゆれを心拍とまちがえて数えるので、不規則にピッと鳴る
     if (!ac || !S.sound.beat || !S.sound.cprBeep || !S.conn.ecg) return;
-    if (Math.random() < 0.72) tone(880, 0.06, 0.38, 'sine');
-    if (Math.random() < 0.15) tone(880, 0.06, 0.38, 'sine', ac.currentTime + rnd(0.12, 0.2));
+    if (hrMode === 'none' && Math.random() < 0.6) return;
+    tone(880, 0.06, 0.38, 'sine');
+    if (hrMode === 'double') tone(880, 0.06, 0.38, 'sine', ac.currentTime + 60 / (S.cprRate || 110) / 2);
   }
   function onBreath() {
     if (!ac || !S.sound.breath) return;
@@ -325,6 +327,7 @@
 
   // ---------- 数値 ----------
   function dispCo2() { return S.etco2; }
+  let hrMode = 'single', hrModeUntil = 0;
   let nibpShowAt = 0, nibpStartAt = 0, lastNibpSeq = -1, cvrr = 3.2, cvAt = 0, beatFlashAt = 0;
   const NIBP_SEC = 6;
   function setNum(id, text, on) { const el = $(id); el.textContent = text; el.classList.toggle('off', !on); }
@@ -333,7 +336,12 @@
     const c = S.conn;
     // HR
     let hr = '---';
-    if (S.compressing) { const r = Math.random(); hr = r < 0.12 ? '---' : String(Math.round(r < 0.75 ? rnd(160, 290) : rnd(95, 160))); }
+    if (S.compressing) {
+      // 機械が圧迫を心拍と数える：圧迫の回数（約110）か、1回を2拍に数えてその倍（約220）。ときどき「---」
+      if (now > hrModeUntil) { const r = Math.random(); hrMode = r < 0.5 ? 'single' : (r < 0.88 ? 'double' : 'none'); hrModeUntil = now + rnd(4, 9); }
+      const base = S.cprRate || 110;
+      hr = hrMode === 'none' ? '---' : String(Math.round((hrMode === 'double' ? base * 2 : base) + rnd(-6, 6)));
+    }
     else if (S.rhythm === 'vf') hr = '---';
     else if (S.rhythm === 'asystole') hr = '0';
     else hr = String(Math.max(0, Math.round(S.hr + rnd(-1.4, 1.4))));

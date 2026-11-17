@@ -106,7 +106,7 @@
   [['少し上げ気味', 3], ['少し下げ気味', -3]].forEach(([label, d]) => {
     const b = document.createElement('button'); b.textContent = label; b.onclick = () => nudge(d); $('co2mode').appendChild(b);
   });
-  const SND = [['beat', '心拍音'], ['cprBeep', '圧迫中のピッ（誤検出）'], ['breath', '呼吸音'], ['flat', '心静止のピー'], ['alarm', 'アラーム']];
+  const SND = [['beat', '心拍音'], ['cprBeep', '圧迫中のピッ（圧迫を拍と数える）'], ['breath', '呼吸音'], ['flat', '心静止のピー'], ['alarm', 'アラーム']];
   SND.forEach(([k, label]) => {
     const b = document.createElement('button'); b.textContent = label; b.dataset.snd = k;
     b.onclick = () => { S.sound[k] = !S.sound[k]; push(); };
@@ -143,6 +143,8 @@
     S.compressing = on; push();
   }
   $('cpr').onclick = () => { keepAwake(); window.__wantAwake = true; setCompress(!S.compressing); };
+  $('cprMini').onclick = () => $('cpr').onclick();
+  $('nextMini').onclick = () => goCue(U.cueIdx + 1);
 
   // EtCO2 の自動（圧迫中だけ）：上手→高め、下手→低め に少しずつ近づき、揺れる
   setInterval(() => {
@@ -228,6 +230,8 @@
     document.querySelectorAll('[data-q]').forEach(b => b.classList.toggle('sel', U.quality === b.dataset.q));
     document.querySelectorAll('[data-snd]').forEach(b => b.classList.toggle('on', !!S.sound[b.dataset.snd]));
     $('cpr').classList.toggle('on', S.compressing);
+    $('cprMini').classList.toggle('on', S.compressing);
+    $('cprMini').textContent = S.compressing ? '圧迫中（止める）' : '圧迫 開始';
     $('cpr').textContent = S.compressing ? '心臓マッサージ中（押すと止める）' : '心臓マッサージ 開始';
     $('v_hr').textContent = Math.round(S.hr);
     $('v_etco2').textContent = Math.round(S.etco2);
@@ -251,6 +255,17 @@
     $('cprTimer').classList.toggle('due', cpr >= 120000);
     const el = U.scRunning ? Date.now() - U.scStartAt : U.scElapsed;
     $('scTimer').textContent = fmt(el);
+    // 次の時刻までのカウントダウン
+    const c = SCN[U.caseIdx]; let nx = null;
+    for (let i = U.cueIdx + 1; i < c.cues.length; i++) { if (c.cues[i][0]) { nx = i; break; } }
+    const box = $('nextCue');
+    if (nx == null) { box.textContent = ''; box.className = 'pill'; }
+    else {
+      const [m, s2] = c.cues[nx][0].split(':').map(Number); const due = (m * 60 + s2) * 1000;
+      const left = due - el;
+      box.textContent = '次 ' + c.cues[nx][0] + '：' + c.cues[nx][2] + (U.scRunning || el ? '（' + (left >= 0 ? 'あと' + fmt(left) : fmt(-left) + '過ぎ') + '）' : '');
+      box.className = 'pill' + (left < 0 ? ' late' : (left <= 10000 && (U.scRunning || el) ? ' soon' : ''));
+    }
   }
   setInterval(tick, 250);
 

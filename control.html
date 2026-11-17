@@ -10,7 +10,11 @@
   * { box-sizing:border-box; margin:0; padding:0; -webkit-tap-highlight-color:transparent; }
   html, body { background:var(--bg); color:var(--txt); font-family:"Hiragino Sans","Hiragino Kaku Gothic ProN",sans-serif; -webkit-user-select:none; user-select:none; }
   body { padding:10px 12px 40px; }
-  .bar { display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:10px; }
+  .bar { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin:-10px -12px 10px; padding:8px 12px; position:sticky; top:0; z-index:5; background:rgba(15,20,26,.97); border-bottom:1px solid var(--line); }
+  .bar button { min-height:44px; padding:6px 14px; }
+  #cprMini.on { background:#c92a2a; border-color:#c92a2a; color:#fff; }
+  .pill.soon { background:#7a4b00; color:#ffd9a0; } .pill.late { background:#7a1010; color:#ffc0c0; }
+  #nextCue { flex:1 1 260px; }
   .pill { padding:6px 12px; border-radius:999px; background:var(--card); font-size:15px; }
   .pill.ok { background:#123d26; color:#7dffb0; } .pill.ng { background:#4a1d10; color:#ffb199; }
   .grid { display:grid; grid-template-columns: 1fr 1fr; gap:10px; }
@@ -51,6 +55,9 @@
   <span class="pill" id="room"></span>
   <span class="pill">圧迫 <span class="timer" id="cprTimer" style="font-size:20px">0:00</span></span>
   <span class="pill">シナリオ <span id="scTimer" style="font-size:20px;font-weight:700">0:00</span></span>
+  <button id="cprMini">圧迫 開始</button>
+  <button id="nextMini">次へ ▶</button>
+  <span class="pill" id="nextCue"></span>
 </div>
 
 <div class="grid">
