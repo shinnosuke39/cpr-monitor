@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>呼吸の記録｜CPR練習モニター</title>
+<style>
+  * { box-sizing:border-box; margin:0; padding:0; -webkit-tap-highlight-color:transparent; }
+  html, body { height:100%; background:#0f141a; color:#e8eef4; font-family:"Hiragino Sans","Hiragino Kaku Gothic ProN",sans-serif; -webkit-user-select:none; user-select:none; overflow:hidden; }
+  body { display:flex; flex-direction:column; padding:14px 14px calc(14px + env(safe-area-inset-bottom)); gap:12px; }
+  .top { display:flex; justify-content:space-between; align-items:center; font-size:14px; color:#93a3b3; }
+  #net.ok { color:#7dffb0; } #net.ng { color:#ffb199; }
+  .nums { display:flex; gap:10px; }
+  .nums div { flex:1; background:#1a222c; border-radius:12px; padding:10px; text-align:center; }
+  .nums b { display:block; font-size:44px; font-variant-numeric:tabular-nums; }
+  .nums span { font-size:13px; color:#93a3b3; }
+  #tap { flex:1; border:none; border-radius:24px; background:#22a0c8; color:#fff; font-size:34px; font-weight:800; font-family:inherit; line-height:1.4; touch-action:manipulation; }
+  #tap.flash { background:#7fe3ff; color:#06323f; }
+  .hint { font-size:13px; color:#93a3b3; text-align:center; line-height:1.6; }
+</style>
+</head>
+<body>
+  <div class="top"><span id="net">つないでいます…</span><span id="room"></span></div>
+  <div class="nums">
+    <div><b id="rr">--</b><span>呼吸数（回/分）</span></div>
+    <div><b id="iv">--</b><span>前回からの秒数</span></div>
+    <div><b id="cnt">0</b><span>押した回数</span></div>
+  </div>
+  <button id="tap">学生がバッグを<br>押したら タップ</button>
+  <p class="hint">10回/分なら6秒に1回。押したときにモニターのCO₂の波形と呼吸の音が出ます。<br>先生のiPadで「呼吸数の出し方：スマホで記録」を選んでおいてください。</p>
+<script src="js/supabase.js"></script>
+<script src="js/config.js"></script>
+<script src="js/common.js"></script>
+<script>
+(function () {
+  const { ROOM, createSync, keepAwake } = window.CPR;
+  const $ = (id) => document.getElementById(id);
+  $('room').textContent = '部屋：' + ROOM;
+  const sync = createSync(() => { }, (s) => {
+    $('net').textContent = s === 'online' ? 'つながっています' : (s === 'offline' ? 'ネットにつながっていません' : 'つないでいます…');
+    $('net').className = s === 'online' ? 'ok' : (s === 'offline' ? 'ng' : '');
+  });
+  let taps = [], count = 0;
+  function rr() {
+    if (taps.length < 2) return '--';
+    const iv = []; for (let i = Math.max(1, taps.length - 4); i < taps.length; i++) iv.push(taps[i] - taps[i - 1]);
+    const mean = iv.reduce((a, b) => a + b, 0) / iv.length;
+    if (Date.now() - taps[taps.length - 1] > Math.max(15000, mean * 2.5)) return 0;
+    return Math.round(60000 / mean);
+  }
+  function show() {
+    $('rr').textContent = rr();
+    $('iv').textContent = taps.length ? ((Date.now() - taps[taps.length - 1]) / 1000).toFixed(0) : '--';
+    $('cnt').textContent = count;
+  }
+  function tap(e) {
+    e.preventDefault();
+    window.__wantAwake = true; keepAwake();
+    taps.push(Date.now()); taps = taps.filter(t => Date.now() - t < 60000); count++;
+    sync.send({ type: 'breath', at: Date.now() });
+    if (navigator.vibrate) navigator.vibrate(30);
+    const b = $('tap'); b.classList.add('flash'); setTimeout(() => b.classList.remove('flash'), 150);
+    show();
+  }
+  $('tap').addEventListener('touchstart', tap, { passive: false });
+  $('tap').addEventListener('mousedown', tap);
+  setInterval(show, 500);
+})();
+</script>
+</body>
+</html>

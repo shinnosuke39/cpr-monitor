@@ -11,7 +11,7 @@
   try { saved = JSON.parse(localStorage.getItem(KEY) || 'null'); } catch (e) { }
   let S = merge(DEFAULT_STATE, (saved && saved.S) || {});
   let U = Object.assign({ caseIdx: 0, cueIdx: -1, scRunning: false, scStartAt: 0, scElapsed: 0,
-    cprStartAt: 0, quality: 'mid', qOffset: 0, auto: true, cycleEnd: null }, (saved && saved.U) || {});
+    cprStartAt: 0, quality: 'mid', qOffset: 0, auto: true }, (saved && saved.U) || {});
   S.epoch = S.epoch || Date.now();
 
   function persist() { try { localStorage.setItem(KEY, JSON.stringify({ S, U })); } catch (e) { } }
@@ -35,6 +35,7 @@
   function onMsg(m) {
     if (!m) return;
     if (m.type === 'hello') sendNow();
+    if (m.type === 'breath') { onTap(m.at || Date.now()); }
     if (m.type === 'ack') monitors[m.id] = { at: Date.now(), lag: (Date.now() - m.sentAt) / 2 };
   }
   let netStatus = 'connecting';
@@ -52,6 +53,19 @@
   setInterval(renderNet, 1000);
   $('room').textContent = '部屋：' + ROOM;
 
+  // ---- スマホの呼吸ボタン（もう1人の先生）----
+  let taps = [], lastTapAt = 0, tapCount = 0;
+  function onTap(at) { taps.push(Date.now()); lastTapAt = Date.now(); tapCount++; taps = taps.filter(t => Date.now() - t < 60000); render(); }
+  function tapRr() {
+    if (taps.length < 2) return 0;
+    const iv = []; for (let i = Math.max(1, taps.length - 4); i < taps.length; i++) iv.push(taps[i] - taps[i - 1]);
+    const mean = iv.reduce((a, b) => a + b, 0) / iv.length;
+    if (Date.now() - lastTapAt > Math.max(15000, mean * 2.5)) return 0;
+    return Math.round(60000 / mean);
+  }
+  setInterval(() => { if (S.rrMode === 'tap') render(); }, 1000);
+  document.querySelectorAll('[data-rr]').forEach(b => b.onclick = () => { S.rrMode = b.dataset.rr; push(); });
+
   // ---- ボタンを作る ----
   const CONN = [['ecg', '心電図'], ['spo2', 'SpO₂'], ['etco2', 'EtCO₂'], ['nibp', '血圧'], ['temp', '体温'], ['vent', '換気量'], ['gas', 'O₂・ISO']];
   CONN.forEach(([k, label]) => {
@@ -67,21 +81,27 @@
       if (k === 'vt' && S.hr < 150) S.hr = 220;
       if (k === 'pea' && (S.hr > 100 || S.hr < 20)) S.hr = 60;
       if (k === 'sinus' && S.hr < 40) S.hr = 120;
-      push();
+      U.dirty = true; push();
     };
     $('rhythm').appendChild(b);
   });
+  const TARGET = { good: 26, mid: 18, poor: 10 };
   const Q = [['good', '圧迫 上手（高め）'], ['mid', 'ふつう'], ['poor', '下手（低め）'], ['manual', '自動にしない']];
   Q.forEach(([k, label]) => {
     const b = document.createElement('button'); b.textContent = label; b.dataset.q = k;
-    b.onclick = () => { U.quality = k; U.qOffset = 0; push(); };
+    b.onclick = () => {
+      U.quality = k; U.qOffset = 0;
+      // 押したらすぐ、その高さへ寄せる（あとは自動で揺れながら近づく）
+      if (k !== 'manual' && S.compressing) { S.etco2 = Math.round((S.etco2 + (TARGET[k] - S.etco2) * 0.45) * 10) / 10; U.fastUntil = Date.now() + 8000; }
+      push();
+    };
     $('co2mode').appendChild(b);
   });
-  const nudge = (d) => { U.qOffset += d; S.etco2 = clamp(S.etco2 + d / 2, 0, 99); push(); };
+  const nudge = (d) => { U.qOffset += d; S.etco2 = clamp(Math.round(S.etco2 + d), 0, 99); U.dirty = true; push(); };
   [['少し上げ気味', 3], ['少し下げ気味', -3]].forEach(([label, d]) => {
     const b = document.createElement('button'); b.textContent = label; b.onclick = () => nudge(d); $('co2mode').appendChild(b);
   });
-  const SND = [['beat', '心拍音'], ['breath', '呼吸音'], ['flat', '心静止のピー'], ['alarm', 'アラーム']];
+  const SND = [['beat', '心拍音'], ['cprBeep', '圧迫中のピッ（誤検出）'], ['breath', '呼吸音'], ['flat', '心静止のピー'], ['alarm', 'アラーム']];
   SND.forEach(([k, label]) => {
     const b = document.createElement('button'); b.textContent = label; b.dataset.snd = k;
     b.onclick = () => { S.sound[k] = !S.sound[k]; push(); };
@@ -99,7 +119,7 @@
       if (k === 'sys' || k === 'dia') S.nibp[k] = clamp(S.nibp[k] + step, ...LIM[k]);
       else S[k] = r(clamp(S[k] + step, ...LIM[k]));
       if (k === 'etco2') U.qOffset += step; // 手で動かしたら、自動の目標も一緒に動かす
-      push();
+      U.dirty = true; push();
     };
   });
 
@@ -108,50 +128,55 @@
   $('nibpNone').onclick = () => { S.nibp.seq = (S.nibp.seq || 0) + 1; S.nibp.at = Date.now(); S.nibp.none = true; push(); };
 
   // 心臓マッサージ
+  // EtCO₂は急に飛ばさない：止めたらその値からゆっくり下がり、再開したらそこからゆっくり上がる
   function setCompress(on) {
     if (on === S.compressing) return;
     if (on) {
-      // 再開のたびに、前回の終わりより必ず低い値から始める
-      if (U.quality !== 'manual') {
-        const base = U.cycleEnd != null ? U.cycleEnd : S.etco2;
-        if (U.cycleEnd != null) S.etco2 = Math.max(4, Math.round(base - rnd(3, 6)));
-      }
+      if (U.quality !== 'manual' && S.etco2 < 6 && S.rr > 0) S.etco2 = 6; // 圧迫開始直後は低めから
       U.cprStartAt = Date.now();
-    } else {
-      U.cycleEnd = S.etco2;
-      U.cprStartAt = 0;
-    }
+    } else U.cprStartAt = 0;
     S.compressing = on; push();
   }
   $('cpr').onclick = () => { keepAwake(); window.__wantAwake = true; setCompress(!S.compressing); };
 
   // EtCO2 の自動（圧迫中だけ）：上手→高め、下手→低め に少しずつ近づき、揺れる
-  const TARGET = { good: 26, mid: 18, poor: 10 };
   setInterval(() => {
-    if (!S.compressing || U.quality === 'manual' || !S.rr) return;
-    const target = clamp(TARGET[U.quality] + U.qOffset, 3, 60);
-    const v = S.etco2 + (target - S.etco2) * 0.18 + rnd(-1.3, 1.3);
-    S.etco2 = Math.round(clamp(v, 2, 70) * 10) / 10;
+    if (U.quality === 'manual') return;
+    const ventilated = S.rrMode === 'tap' ? (Date.now() - lastTapAt < 15000) : S.rr > 0;
+    let v = S.etco2;
+    if (S.compressing && ventilated) {
+      // 圧迫中：圧迫の質の高さへ、揺れながら近づく
+      const target = clamp(TARGET[U.quality] + U.qOffset, 3, 60);
+      const rate = Date.now() < (U.fastUntil || 0) ? 0.35 : 0.13;
+      v = v + (target - v) * rate + rnd(-1.1, 1.1);
+    } else if (!S.compressing && S.rhythm !== 'sinus' && ventilated) {
+      // 心停止のまま圧迫を止めている（心電図の確認中など）：ゆっくり下がる
+      v = v + (3 - v) * 0.07 + rnd(-0.3, 0.2);
+    } else return;
+    S.etco2 = Math.round(clamp(v, 0, 70) * 10) / 10;
     push();
-  }, 2500);
+  }, 2000);
 
   // ---- シナリオ ----
   SCN.forEach((c, i) => { const o = document.createElement('option'); o.value = i; o.textContent = c.title; $('scSel').appendChild(o); });
-  $('scSel').onchange = (e) => { U.caseIdx = Number(e.target.value); U.cueIdx = -1; U.scRunning = false; U.scElapsed = 0; U.cycleEnd = null; S.caseLabel = SCN[U.caseIdx].patient; push(); buildScenario(); };
-  function applyScene(sc) {
-    if (sc.cmp != null) setCompress(sc.cmp); // 先に止める（止めた時点のEtCO₂を覚えるため）
+  $('scSel').onchange = (e) => { U.caseIdx = Number(e.target.value); U.cueIdx = -1; U.sceneIdx = -1; U.scRunning = false; U.scElapsed = 0; S.caseLabel = SCN[U.caseIdx].patient; push(); buildScenario(); };
+  function applyScene(sc, idx) {
+    if (sc.cmp != null) setCompress(sc.cmp);
     if (sc.rhythm) S.rhythm = sc.rhythm;
     if (sc.hr != null) S.hr = sc.hr;
-    ['spo2', 'etco2', 'rr', 'temp'].forEach(k => { if (sc[k] != null) S[k] = sc[k]; });
+    ['spo2', 'rr', 'temp'].forEach(k => { if (sc[k] != null) S[k] = sc[k]; });
+    // EtCO₂：自動のときは、最初（CPA）とROSCだけシーンの値にする。途中は自動の動きにまかせる
+    if (sc.etco2 != null && (U.quality === 'manual' || sc.co2Set)) S.etco2 = sc.etco2;
+    U.sceneIdx = idx; U.dirty = false;
     if (sc.bp === null) { /* 測れない：表示はそのまま（つないでいなければ出ない） */ }
     else if (sc.bp) { S.nibp.sys = sc.bp[0]; S.nibp.dia = sc.bp[1]; }
-    $('memo').textContent = sc.name + '：' + (sc.memo || '');
+    $('memo').textContent = 'いま：シーン' + (idx + 1) + '「' + sc.name + '」 ' + (sc.memo || '');
     push();
   }
   function goCue(i) {
     const c = SCN[U.caseIdx]; if (i < 0 || i >= c.cues.length) return;
     U.cueIdx = i; const cue = c.cues[i];
-    if (cue[1] >= 0) applyScene(c.scenes[cue[1]]);
+    if (cue[1] >= 0) applyScene(c.scenes[cue[1]], cue[1]);
     else { $('memo').textContent = cue[2]; push(); }
   }
   function buildScenario() {
@@ -166,7 +191,7 @@
       d.appendChild(b); box.appendChild(d);
     });
     const sb = $('scenes'); sb.innerHTML = '';
-    c.scenes.forEach((s, i) => { const b = document.createElement('button'); b.textContent = (i + 1) + ' ' + s.name; b.onclick = () => applyScene(s); sb.appendChild(b); });
+    c.scenes.forEach((s, i) => { const b = document.createElement('button'); b.textContent = (i + 1) + ' ' + s.name; b.dataset.scene = i; b.onclick = () => applyScene(s, i); sb.appendChild(b); });
     render();
   }
   $('scNext').onclick = () => goCue(U.cueIdx + 1);
@@ -176,18 +201,18 @@
   };
   $('scStop').onclick = () => {
     if (U.scRunning) { U.scRunning = false; U.scElapsed = Date.now() - U.scStartAt; }
-    else { U.scElapsed = 0; U.cueIdx = -1; U.cycleEnd = null; } // 止まっているときにもう一度押す＝0にもどす
+    else { U.scElapsed = 0; U.cueIdx = -1; } // 止まっているときにもう一度押す＝0にもどす
     push();
   };
 
   // ---- 表示 ----
   $('showCase').onclick = () => { S.showCase = !S.showCase; push(); };
   $('showAlarm').onclick = () => { S.showAlarmText = !S.showAlarmText; push(); };
-  $('allOff').onclick = () => { Object.keys(S.conn).forEach(k => S.conn[k] = false); S.compressing = false; U.cprStartAt = 0; U.cycleEnd = null; push(); };
+  $('allOff').onclick = () => { Object.keys(S.conn).forEach(k => S.conn[k] = false); S.compressing = false; U.cprStartAt = 0; push(); };
   $('resetAll').onclick = () => {
     if (!confirm('値とつなぎを最初の状態にもどします。よいですか？')) return;
     const ep = Date.now(); S = clone(DEFAULT_STATE); S.epoch = ep; S.caseLabel = SCN[U.caseIdx].patient;
-    U.cueIdx = -1; U.scRunning = false; U.scElapsed = 0; U.cprStartAt = 0; U.cycleEnd = null; push();
+    U.cueIdx = -1; U.scRunning = false; U.scElapsed = 0; U.cprStartAt = 0; push();
   };
 
   function fmt(ms) { const s = Math.max(0, Math.floor(ms / 1000)); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); }
@@ -206,6 +231,10 @@
     $('v_fio2').textContent = S.fio2; $('v_isoIn').textContent = Number(S.isoIn).toFixed(1); $('v_isoEx').textContent = Number(S.isoEx).toFixed(1);
     $('vol').value = S.sound.volume; $('volv').textContent = Math.round(S.sound.volume * 100) + '%';
     $('showCase').classList.toggle('on', S.showCase); $('showAlarm').classList.toggle('on', S.showAlarmText);
+    document.querySelectorAll('[data-scene]').forEach(b => b.classList.toggle('cur', Number(b.dataset.scene) === U.sceneIdx));
+    $('dirty').style.display = (U.sceneIdx != null && U.sceneIdx >= 0 && U.dirty) ? 'inline-block' : 'none';
+    document.querySelectorAll('[data-rr]').forEach(b => b.classList.toggle('sel', (S.rrMode || 'auto') === b.dataset.rr));
+    $('tapRr').textContent = S.rrMode === 'tap' ? ('スマホの記録：' + (tapRr() || 0) + '回/分（' + tapCount + '回押された）') : '';
     document.querySelectorAll('.cue').forEach((d, i) => { d.classList.toggle('now', i === U.cueIdx); d.classList.toggle('done', i < U.cueIdx); });
     $('scStart').textContent = U.scRunning ? '▶ 進行中' : (U.scElapsed ? '▶ 再開' : '▶ 時計スタート');
     $('scStop').textContent = U.scRunning ? '一時停止' : '0にもどす';

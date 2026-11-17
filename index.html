@@ -21,13 +21,15 @@
   <label>部屋の名前（2台を同じにする）：<input id="room" value="cpr1"></label>
   <a class="b m" id="toMon" href="monitor.html">モニター（学生が見る画面）</a>
   <a class="b c" id="toCtl" href="control.html">操作（先生のiPad）</a>
+  <a class="b" id="toBr" href="breath.html" style="background:#1c7f99">呼吸の記録（もう1人の先生のスマホ）</a>
   <p><small>ネットが切れたときは、同じパソコンでモニターと操作を別々の窓で開けば、そのパソコンだけで動きます。</small></p>
 </main>
 <script>
   const r = document.getElementById('room');
   function upd() { const v = encodeURIComponent((r.value || 'cpr1').trim());
     document.getElementById('toMon').href = 'monitor.html?room=' + v;
-    document.getElementById('toCtl').href = 'control.html?room=' + v; }
+    document.getElementById('toCtl').href = 'control.html?room=' + v;
+    document.getElementById('toBr').href = 'breath.html?room=' + v; }
   r.addEventListener('input', upd); upd();
 </script>
 </body>

@@ -61,13 +61,15 @@
         const period = 60 / Math.max(60, S.cprRate || 110) * (1 + rnd(-0.08, 0.08));
         comps.push({ t: Math.max(nextComp, t - 0.05), period, a: rnd(0.8, 1.5) });
         nextComp = t + period;
+        compBeep();
       }
     } else nextComp = t;
     // 換気
-    if (S.rr > 0) {
+    if (S.rrMode === 'tap') { nextBreath = t + 0.5; }
+    else if (S.rr > 0) {
       if (t >= nextBreath) {
         const period = 60 / S.rr;
-        breaths.push({ t: Math.max(nextBreath, t - 0.05), period, v: dispCo2() });
+        breaths.push({ t: Math.max(nextBreath, t - 0.05), period, v: breathCo2() });
         onBreath();
         nextBreath = Math.max(nextBreath + period, t);
       }
@@ -278,6 +280,31 @@
     const sp = (S.conn.spo2 && perfusing()) ? S.spo2 : 95;
     tone(520 + Math.max(0, sp - 80) * 22, 0.07, 0.42, 'sine');
   }
+  // 1回ごとに少しずつ違う値（同じ数字に張りつかない）
+  function breathCo2() { const b = S.etco2; return b <= 0 ? 0 : Math.max(0, b + rnd(-1.2, 1.2)); }
+  let lastBreathV = null;
+  // スマホの呼吸ボタン：押した瞬間に1回分の呼吸を始める
+  let taps = [];
+  function tapBreath() {
+    const t = performance.now() / 1000;
+    taps.push(Date.now()); taps = taps.filter(x => Date.now() - x < 60000);
+    const prev = breaths.length ? breaths[breaths.length - 1].t : t - 6;
+    breaths.push({ t, period: Math.min(8, Math.max(1.5, t - prev)), v: breathCo2() });
+    onBreath();
+  }
+  function tapRr() {
+    if (taps.length < 2) return 0;
+    const iv = []; for (let i = Math.max(1, taps.length - 4); i < taps.length; i++) iv.push(taps[i] - taps[i - 1]);
+    const mean = iv.reduce((a, b) => a + b, 0) / iv.length;
+    if (Date.now() - taps[taps.length - 1] > Math.max(15000, mean * 2.5)) return 0;
+    return Math.round(60000 / mean);
+  }
+  function compBeep() {
+    // 圧迫のゆれを心拍とまちがえて数えるので、不規則にピッと鳴る
+    if (!ac || !S.sound.beat || !S.sound.cprBeep || !S.conn.ecg) return;
+    if (Math.random() < 0.72) tone(880, 0.06, 0.38, 'sine');
+    if (Math.random() < 0.15) tone(880, 0.06, 0.38, 'sine', ac.currentTime + rnd(0.12, 0.2));
+  }
   function onBreath() {
     if (!ac || !S.sound.breath) return;
     breathSound();
@@ -328,12 +355,15 @@
     // VT・MV
     const vtv = Math.round((S.vt || 0) * (1 + rnd(-0.03, 0.03)));
     setNum('vVt', S.rr > 0 ? String(vtv) : '---', c.vent);
-    setNum('vMv', S.rr > 0 ? ((S.vt || 0) * S.rr / 1000).toFixed(1) : '---', c.vent);
+    const rrNow = S.rrMode === 'tap' ? tapRr() : S.rr;
+    setNum('vMv', rrNow > 0 ? ((S.vt || 0) * rrNow / 1000).toFixed(1) : '---', c.vent);
     show('vtBar', c.vent);
     // CO2
-    setNum('vCo2', String(Math.round(dispCo2())), c.etco2);
+    const lb = breaths.length ? breaths[breaths.length - 1] : null;
+    const breathingNow = lb && (performance.now() / 1000 - lb.t) < 20;
+    setNum('vCo2', String(Math.round(breathingNow ? lb.v : S.etco2)), c.etco2);
     setNum('vIn', '0/', c.etco2);
-    setNum('vRr', String(Math.round(S.rr)), c.etco2);
+    setNum('vRr', String(S.rrMode === 'tap' ? tapRr() : Math.round(S.rr)), c.etco2);
     show('coBar', c.etco2); show('lung', c.etco2);
     // NIBP
     const n = S.nibp;
@@ -376,6 +406,7 @@
   // ---------- 同期 ----------
   const sync = createSync((m, via) => {
     if (!m) return;
+    if (m.type === 'breath') { if (S.rrMode === 'tap') tapBreath(); return; }
     if (m.type === 'state') {
       if (m.state.seq < (S.seq || 0) && m.state.epoch === S.epoch) return;
       S = merge(DEFAULT_STATE, m.state);
@@ -419,15 +450,31 @@
   function clock() { const d = new Date(); $('clock').textContent = String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0'); }
   setInterval(clock, 1000); clock();
 
+  // 全画面（Safari の古い版にも対応）
+  function isFs() { return !!(document.fullscreenElement || document.webkitFullscreenElement); }
+  function goFs() {
+    const el = document.documentElement;
+    try {
+      if (el.requestFullscreen) return el.requestFullscreen().catch(() => { });
+      if (el.webkitRequestFullscreen) return el.webkitRequestFullscreen();
+    } catch (e) { }
+  }
+  function fsUi() { $('fsBtn').classList.toggle('hide', isFs() || idle); }
+  let idle = false, idleTimer = null;
+  function wake() { idle = false; document.body.classList.remove('idle'); fsUi(); clearTimeout(idleTimer); idleTimer = setTimeout(() => { idle = true; document.body.classList.add('idle'); fsUi(); }, 3000); }
+  document.addEventListener('mousemove', wake); wake();
+  $('fsBtn').addEventListener('click', () => { initAudio(); if (ac.state === 'suspended') ac.resume(); goFs(); });
+  document.addEventListener('webkitfullscreenchange', () => { fsUi(); setTimeout(resizeAll, 200); });
+
   $('startBtn').addEventListener('click', async () => {
     initAudio(); if (ac.state === 'suspended') ac.resume();
-    try { await document.documentElement.requestFullscreen(); } catch (e) { }
+    goFs();
     window.__wantAwake = true; keepAwake();
     $('start').style.display = 'none';
     setTimeout(resizeAll, 300);
   });
-  document.addEventListener('keydown', (e) => { if (e.key === 'f') document.documentElement.requestFullscreen().catch(() => { }); });
-  document.addEventListener('fullscreenchange', () => setTimeout(resizeAll, 200));
+  document.addEventListener('keydown', (e) => { if (e.key === 'f') goFs(); });
+  document.addEventListener('fullscreenchange', () => { fsUi(); setTimeout(resizeAll, 200); });
 
   // テスト用：URLに ?demo=1 で全部つないだ状態にする
   if (new URLSearchParams(location.search).get('demo')) {

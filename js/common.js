@@ -18,7 +18,8 @@
     vt: 100,          // 1回換気量 mL
     fio2: 98,
     isoIn: 0.0, isoEx: 0.0,
-    sound: { beat: true, breath: true, alarm: true, flat: true, volume: 0.7 },
+    sound: { beat: true, cprBeep: true, breath: true, alarm: true, flat: true, volume: 0.7 },
+    rrMode: 'auto',       // auto=設定値で自動 / tap=スマホの呼吸ボタン
     showAlarmText: false,
     caseLabel: '',
     showCase: true,
@@ -42,16 +43,26 @@
   function createSync(onMessage, onStatus) {
     const name = 'cprmon-' + ROOM;
     let bc = null, ch = null, status = 'connecting';
+    // 同じ端末内（BroadcastChannel）とネットの両方から同じ知らせが届くので、2回目は捨てる
+    const seen = new Map();
+    const deliver = (m, via) => {
+      if (m && m.mid) {
+        if (seen.has(m.mid)) return;
+        seen.set(m.mid, Date.now());
+        if (seen.size > 300) { const cut = Date.now() - 30000; for (const [k, t] of seen) if (t < cut) seen.delete(k); }
+      }
+      onMessage(m, via);
+    };
     const setStatus = (s) => { status = s; onStatus && onStatus(s); };
     try {
       bc = new BroadcastChannel(name);
-      bc.onmessage = (e) => onMessage(e.data, 'local');
+      bc.onmessage = (e) => deliver(e.data, 'local');
     } catch (e) { }
     try {
       const cfg = window.CPR_CONFIG;
       const client = window.supabase.createClient(cfg.url, cfg.key, { auth: { persistSession: false } });
       ch = client.channel(name, { config: { broadcast: { self: false } } });
-      ch.on('broadcast', { event: 'm' }, (p) => onMessage(p.payload, 'net'));
+      ch.on('broadcast', { event: 'm' }, (p) => deliver(p.payload, 'net'));
       ch.subscribe((s) => {
         if (s === 'SUBSCRIBED') setStatus('online');
         else if (s === 'CHANNEL_ERROR' || s === 'TIMED_OUT' || s === 'CLOSED') setStatus('offline');
@@ -59,6 +70,7 @@
     } catch (e) { setStatus('offline'); }
     return {
       send(msg) {
+        msg.mid = Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
         if (bc) { try { bc.postMessage(msg); } catch (e) { } }
         if (ch && status === 'online') { ch.send({ type: 'broadcast', event: 'm', payload: msg }); }
       },
