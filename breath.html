@@ -27,7 +27,7 @@
     <div><b id="cnt">0</b><span>押した回数</span></div>
   </div>
   <button id="tap">学生がバッグを<br>押したら タップ</button>
-  <p class="hint">10回/分なら6秒に1回。押したときにモニターのCO₂の波形と呼吸の音が出ます。<br>先生のiPadで「呼吸数の出し方：スマホで記録」を選んでおいてください。</p>
+  <p class="hint">最初の2分ほど押してもらえば、そのリズムを覚えて、あとはモニターが<b>自動で続けます</b>（押すのをやめてよい）。途中でまた押すと合わせ直します。10回/分なら6秒に1回。<br>先生のiPadで「呼吸数の出し方：スマホで記録」を選んでおいてください。</p>
 <script src="js/supabase.js"></script>
 <script src="js/config.js"></script>
 <script src="js/common.js"></script>
@@ -42,11 +42,10 @@
   });
   let taps = [], count = 0;
   function rr() {
-    if (taps.length < 2) return '--';
-    const iv = []; for (let i = Math.max(1, taps.length - 4); i < taps.length; i++) iv.push(taps[i] - taps[i - 1]);
-    const mean = iv.reduce((a, b) => a + b, 0) / iv.length;
-    if (Date.now() - taps[taps.length - 1] > Math.max(15000, mean * 2.5)) return 0;
-    return Math.round(60000 / mean);
+    const iv = [];
+    for (let i = taps.length - 1; i >= 1 && iv.length < 6; i--) { const d = taps[i] - taps[i - 1]; if (d >= 1500 && d <= 20000) iv.push(d); }
+    if (!iv.length) return '--';
+    return Math.round(60000 / (iv.reduce((a, b) => a + b, 0) / iv.length));
   }
   function show() {
     $('rr').textContent = rr();
@@ -56,7 +55,7 @@
   function tap(e) {
     e.preventDefault();
     window.__wantAwake = true; keepAwake();
-    taps.push(Date.now()); taps = taps.filter(t => Date.now() - t < 60000); count++;
+    taps.push(Date.now()); taps = taps.filter(t => Date.now() - t < 90000); count++;
     sync.send({ type: 'breath', at: Date.now() });
     if (navigator.vibrate) navigator.vibrate(30);
     const b = $('tap'); b.classList.add('flash'); setTimeout(() => b.classList.remove('flash'), 150);

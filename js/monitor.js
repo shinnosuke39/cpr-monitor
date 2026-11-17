@@ -65,11 +65,10 @@
       }
     } else nextComp = t;
     // 換気
-    if (S.rrMode === 'tap') { nextBreath = t + 0.5; }
-    else if (S.rr > 0) {
+    if (S.rr > 0) {
       if (t >= nextBreath) {
         const period = 60 / S.rr;
-        breaths.push({ t: Math.max(nextBreath, t - 0.05), period, v: breathCo2() });
+        breaths.push({ t: Math.max(nextBreath, t - 0.05), period, v: breathCo2(), auto: true });
         onBreath();
         nextBreath = Math.max(nextBreath + period, t);
       }
@@ -285,19 +284,14 @@
   let lastBreathV = null;
   // スマホの呼吸ボタン：押した瞬間に1回分の呼吸を始める
   let taps = [];
+  // 押されたらその瞬間に呼吸を合わせる。あとは覚えた呼吸数（S.rr）で自動に続く
   function tapBreath() {
     const t = performance.now() / 1000;
-    taps.push(Date.now()); taps = taps.filter(x => Date.now() - x < 60000);
-    const prev = breaths.length ? breaths[breaths.length - 1].t : t - 6;
-    breaths.push({ t, period: Math.min(8, Math.max(1.5, t - prev)), v: breathCo2() });
-    onBreath();
-  }
-  function tapRr() {
-    if (taps.length < 2) return 0;
-    const iv = []; for (let i = Math.max(1, taps.length - 4); i < taps.length; i++) iv.push(taps[i] - taps[i - 1]);
-    const mean = iv.reduce((a, b) => a + b, 0) / iv.length;
-    if (Date.now() - taps[taps.length - 1] > Math.max(15000, mean * 2.5)) return 0;
-    return Math.round(60000 / mean);
+    const period = S.rr > 0 ? 60 / S.rr : 6;
+    const last = breaths.length ? breaths[breaths.length - 1] : null;
+    if (last && last.auto && t - last.t < period * 0.5) { last.t = t; last.auto = false; } // 自動の1回とほぼ同時なら、押した時刻に合わせ直す
+    else { breaths.push({ t, period, v: breathCo2() }); onBreath(); }
+    nextBreath = t + period;
   }
   function compBeep() {
     // 圧迫のゆれを心拍とまちがえて数えるので、不規則にピッと鳴る
@@ -355,7 +349,7 @@
     // VT・MV
     const vtv = Math.round((S.vt || 0) * (1 + rnd(-0.03, 0.03)));
     setNum('vVt', S.rr > 0 ? String(vtv) : '---', c.vent);
-    const rrNow = S.rrMode === 'tap' ? tapRr() : S.rr;
+    const rrNow = S.rr;
     setNum('vMv', rrNow > 0 ? ((S.vt || 0) * rrNow / 1000).toFixed(1) : '---', c.vent);
     show('vtBar', c.vent);
     // CO2
@@ -363,7 +357,7 @@
     const breathingNow = lb && (performance.now() / 1000 - lb.t) < 20;
     setNum('vCo2', String(Math.round(breathingNow ? lb.v : S.etco2)), c.etco2);
     setNum('vIn', '0/', c.etco2);
-    setNum('vRr', String(S.rrMode === 'tap' ? tapRr() : Math.round(S.rr)), c.etco2);
+    setNum('vRr', String(Math.round(S.rr)), c.etco2);
     show('coBar', c.etco2); show('lung', c.etco2);
     // NIBP
     const n = S.nibp;

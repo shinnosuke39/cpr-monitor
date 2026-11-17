@@ -55,13 +55,18 @@
 
   // ---- スマホの呼吸ボタン（もう1人の先生）----
   let taps = [], lastTapAt = 0, tapCount = 0;
-  function onTap(at) { taps.push(Date.now()); lastTapAt = Date.now(); tapCount++; taps = taps.filter(t => Date.now() - t < 60000); render(); }
+  // 押された間隔を覚えて、呼吸数にする（押すのをやめても、そのリズムでモニターが自動で続ける）
+  function onTap(at) {
+    taps.push(Date.now()); lastTapAt = Date.now(); tapCount++;
+    taps = taps.filter(t => Date.now() - t < 90000);
+    const r = tapRr();
+    if (r > 0 && S.rrMode === 'tap') { S.rr = r; push(); } else render();
+  }
   function tapRr() {
-    if (taps.length < 2) return 0;
-    const iv = []; for (let i = Math.max(1, taps.length - 4); i < taps.length; i++) iv.push(taps[i] - taps[i - 1]);
-    const mean = iv.reduce((a, b) => a + b, 0) / iv.length;
-    if (Date.now() - lastTapAt > Math.max(15000, mean * 2.5)) return 0;
-    return Math.round(60000 / mean);
+    const iv = [];
+    for (let i = taps.length - 1; i >= 1 && iv.length < 6; i--) { const d = taps[i] - taps[i - 1]; if (d >= 1500 && d <= 20000) iv.push(d); }
+    if (!iv.length) return 0;
+    return Math.round(60000 / (iv.reduce((a, b) => a + b, 0) / iv.length));
   }
   setInterval(() => { if (S.rrMode === 'tap') render(); }, 1000);
   document.querySelectorAll('[data-rr]').forEach(b => b.onclick = () => { S.rrMode = b.dataset.rr; push(); });
@@ -142,7 +147,7 @@
   // EtCO2 の自動（圧迫中だけ）：上手→高め、下手→低め に少しずつ近づき、揺れる
   setInterval(() => {
     if (U.quality === 'manual') return;
-    const ventilated = S.rrMode === 'tap' ? (Date.now() - lastTapAt < 15000) : S.rr > 0;
+    const ventilated = S.rr > 0;
     let v = S.etco2;
     if (S.compressing && ventilated) {
       // 圧迫中：圧迫の質の高さへ、揺れながら近づく
@@ -164,7 +169,8 @@
     if (sc.cmp != null) setCompress(sc.cmp);
     if (sc.rhythm) S.rhythm = sc.rhythm;
     if (sc.hr != null) S.hr = sc.hr;
-    ['spo2', 'rr', 'temp'].forEach(k => { if (sc[k] != null) S[k] = sc[k]; });
+    ['spo2', 'temp'].forEach(k => { if (sc[k] != null) S[k] = sc[k]; });
+    if (sc.rr != null && S.rrMode !== 'tap') S.rr = sc.rr; // スマホで覚えた呼吸数は上書きしない
     // EtCO₂：自動のときは、最初（CPA）とROSCだけシーンの値にする。途中は自動の動きにまかせる
     if (sc.etco2 != null && (U.quality === 'manual' || sc.co2Set)) S.etco2 = sc.etco2;
     U.sceneIdx = idx; U.dirty = false;
@@ -234,7 +240,7 @@
     document.querySelectorAll('[data-scene]').forEach(b => b.classList.toggle('cur', Number(b.dataset.scene) === U.sceneIdx));
     $('dirty').style.display = (U.sceneIdx != null && U.sceneIdx >= 0 && U.dirty) ? 'inline-block' : 'none';
     document.querySelectorAll('[data-rr]').forEach(b => b.classList.toggle('sel', (S.rrMode || 'auto') === b.dataset.rr));
-    $('tapRr').textContent = S.rrMode === 'tap' ? ('スマホの記録：' + (tapRr() || 0) + '回/分（' + tapCount + '回押された）') : '';
+    $('tapRr').textContent = S.rrMode === 'tap' ? (tapCount < 2 ? 'スマホで2回以上押されると、そのリズムを覚えます' : ('スマホで覚えた呼吸：' + S.rr + '回/分（' + tapCount + '回押された）。押すのをやめても、このリズムで自動で続きます')) : '';
     document.querySelectorAll('.cue').forEach((d, i) => { d.classList.toggle('now', i === U.cueIdx); d.classList.toggle('done', i < U.cueIdx); });
     $('scStart').textContent = U.scRunning ? '▶ 進行中' : (U.scElapsed ? '▶ 再開' : '▶ 時計スタート');
     $('scStop').textContent = U.scRunning ? '一時停止' : '0にもどす';
