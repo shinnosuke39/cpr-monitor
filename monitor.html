@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>モニター｜CPR練習モニター</title>
+<style>
+  :root { --ecg:#ffff1e; --spo2:#ff2cff; --flow:#f4f4c8; --co2:#22e4ff; --vt:#d9f2b0; --bp:#2cff3c; --temp:#ffc9d6; --o2:#ffcf9a; --iso:#ffcf9a; --frame:#d8d8d8; --navy:#1a2a8c; }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  html, body { height:100%; background:#000; overflow:hidden; }
+  body { display:flex; align-items:center; justify-content:center; font-family:"Arial Narrow","DIN Condensed","Helvetica Neue",Arial,"Hiragino Sans",sans-serif; color:#fff; }
+  #stage { position:relative; width:800px; height:600px; transform-origin:center center; background:#000; flex:none; }
+  .abs { position:absolute; }
+  .t { font-family:"Hiragino Sans","Hiragino Kaku Gothic ProN",sans-serif; font-weight:600; }
+  .n { font-weight:700; font-variant-numeric:tabular-nums; line-height:1; letter-spacing:-0.5px; }
+  /* 上の帯 */
+  #top { left:0; top:0; width:800px; height:31px; background:#000; }
+  .btn { top:2px; height:27px; border:1px solid #9aa6ff; background:var(--navy); color:#fff; font-size:17px; display:flex; align-items:center; justify-content:center; }
+  #name { left:286px; top:3px; font-size:21px; color:#fff; letter-spacing:0.5px; font-family:"Hiragino Sans",sans-serif; font-weight:500; }
+  #bell { left:705px; top:2px; width:33px; height:27px; background:#ffd800; display:flex; align-items:center; justify-content:center; }
+  #bell.alarm { animation: bellb 0.6s steps(1) infinite; }
+  @keyframes bellb { 50% { background:#ff2020; } }
+  #clock { left:742px; top:2px; width:58px; height:27px; background:#111; color:#fff; font-size:22px; display:flex; align-items:center; justify-content:center; }
+  #msg { left:440px; top:2px; height:27px; padding:0 10px; background:#e00000; color:#fff; font-size:19px; display:none; align-items:center; }
+  /* 枠線 */
+  .hl { height:2px; background:var(--frame); } .vl { width:2px; background:var(--frame); }
+  /* 波形 */
+  canvas.w { position:absolute; left:0; width:643px; }
+  .wl { font-size:16px; left:2px; font-family:Arial,sans-serif; }
+  .tiny { font-size:12px; border:1px solid currentColor; padding:0 2px; line-height:13px; font-family:Arial,sans-serif; }
+  .arrow { width:16px; height:14px; border:1px solid #9aa6ff; background:#0d1a66; left:622px; color:#9aa6ff; font-size:10px; display:flex; align-items:center; justify-content:center; }
+  /* 右の数値 */
+  .pl { font-size:17px; font-family:Arial,sans-serif; }
+  .off { opacity:0.0; }
+  .bar { width:8px; display:flex; flex-direction:column-reverse; gap:2px; }
+  .bar i { display:block; height:5px; background:#2a2a2a; }
+  .alarmbox { animation: ab 0.8s steps(1) infinite; }
+  @keyframes ab { 50% { background:#7a0000; } }
+  #heart { transition: opacity .08s; }
+</style>
+</head>
+<body>
+<div id="stage">
+  <!-- 上の帯 -->
+  <div class="abs btn t" style="left:2px;width:86px;">× 1</div>
+  <div class="abs btn t" style="left:96px;width:88px;background:#0b3d16;border-color:#2cff3c;color:#2cff3c;font-size:14px;">検出感度:弱</div>
+  <div class="abs btn t" style="left:193px;width:86px;">メニュー</div>
+  <div class="abs" id="name"></div>
+  <div class="abs t" id="msg"></div>
+  <div class="abs" id="bell"><svg width="20" height="20" viewBox="0 0 20 20"><path d="M10 2c-3 0-5 2.3-5 5.3v4.2L3 14v1h14v-1l-2-2.5V7.3C15 4.3 13 2 10 2z" fill="#a46a00"/><circle cx="10" cy="17" r="2" fill="#a46a00"/></svg></div>
+  <div class="abs n" id="clock">--:--</div>
+
+  <!-- 波形の領域 -->
+  <div class="abs hl" style="left:0;top:30px;width:800px;"></div>
+  <canvas class="w" id="cvEcg" style="top:32px;height:122px;"></canvas>
+  <div class="abs wl" id="labEcg" style="top:33px;color:var(--ecg)">ECG</div>
+  <div class="abs tiny" style="left:569px;top:36px;color:var(--ecg)">HF</div>
+  <div class="abs arrow" style="top:50px">▲</div><div class="abs arrow" style="top:138px">▼</div>
+
+  <canvas class="w" id="cvSpo2" style="top:156px;height:124px;"></canvas>
+  <div class="abs wl" id="labSpo2" style="top:157px;color:var(--spo2)">SpO<sub style="font-size:11px">2</sub></div>
+
+  <canvas class="w" id="cvFlow" style="top:282px;height:103px;"></canvas>
+  <div class="abs wl" id="labFlow" style="top:285px;color:var(--flow)">Flow(30) <span class="tiny" style="color:#fff">大</span></div>
+  <div class="abs arrow" style="top:367px">▤</div>
+
+  <canvas class="w" id="cvCo2" style="top:387px;height:124px;"></canvas>
+  <div class="abs wl" id="labCo2" style="top:390px;color:var(--co2)">CO<sub style="font-size:11px">2</sub></div>
+  <div class="abs arrow" style="top:490px">⊓</div>
+
+  <!-- 右の数値の列 -->
+  <div class="abs vl" style="left:645px;top:30px;height:570px;"></div>
+  <div class="abs hl" style="left:645px;top:152px;width:155px;"></div>
+  <div class="abs hl" style="left:645px;top:279px;width:155px;"></div>
+  <div class="abs hl" style="left:645px;top:384px;width:155px;"></div>
+
+  <!-- HR -->
+  <div class="abs" id="boxHr" style="left:647px;top:32px;width:153px;height:120px;"></div>
+  <div class="abs pl" id="nmHr" style="left:649px;top:34px;color:var(--ecg)">HR</div>
+  <svg class="abs" id="heart" style="left:649px;top:56px" width="22" height="20" viewBox="0 0 22 20"><path d="M11 19 2 10C-1 7 1 1 6 1c2.4 0 4 1.5 5 3 1-1.5 2.6-3 5-3 5 0 7 6 4 9z" fill="var(--ecg)"/></svg>
+  <div class="abs n" id="vHr" style="right:2px;top:46px;font-size:76px;color:var(--ecg);text-align:right;">---</div>
+  <div class="abs pl" id="nmCv" style="left:676px;top:128px;color:var(--ecg);font-size:16px">CV<sub style="font-size:10px">RR</sub></div>
+  <div class="abs n" id="vCv" style="right:4px;top:115px;font-size:38px;color:var(--ecg);">---</div>
+
+  <!-- SpO2 -->
+  <div class="abs" id="boxSpo2" style="left:647px;top:154px;width:153px;height:125px;"></div>
+  <div class="abs pl" id="nmSpo2" style="left:649px;top:157px;color:var(--spo2)">SpO<sub style="font-size:10px">2</sub></div>
+  <div class="abs" id="spDot" style="left:648px;top:178px;width:20px;height:20px;border-radius:50%;background:var(--spo2)"></div>
+  <div class="abs bar" id="spBar" style="left:654px;top:204px;height:70px;"></div>
+  <div class="abs n" id="vSpo2" style="right:4px;top:170px;font-size:78px;color:var(--spo2);">---</div>
+  <div class="abs pl" id="nmPr" style="left:677px;top:257px;color:var(--spo2)">PR</div>
+  <div class="abs n" id="vPr" style="right:4px;top:241px;font-size:40px;color:var(--spo2);">---</div>
+
+  <!-- VT/MV -->
+  <div class="abs bar" id="vtBar" style="left:654px;top:310px;height:70px;"></div>
+  <div class="abs pl" id="nmVt" style="left:678px;top:292px;color:var(--vt)">VT</div>
+  <div class="abs n" id="vVt" style="right:4px;top:286px;font-size:46px;color:var(--vt);">---</div>
+  <div class="abs pl" id="nmMv" style="left:678px;top:347px;color:var(--vt)">MV</div>
+  <div class="abs n" id="vMv" style="right:4px;top:339px;font-size:40px;color:var(--vt);">---</div>
+
+  <!-- CO2 -->
+  <div class="abs pl" id="nmCo2" style="left:649px;top:390px;color:var(--co2)">CO<sub style="font-size:10px">2</sub></div>
+  <div class="abs pl" id="nmEt" style="left:774px;top:391px;color:var(--co2);font-size:15px">ET</div>
+  <svg class="abs" id="lung" style="left:649px;top:414px" width="20" height="22" viewBox="0 0 20 22"><path d="M9 1v8L4 6C1 7 0 13 1 19c1 2 4 2 7 0V9M11 1v8l5-3c3 1 4 7 3 13-1 2-4 2-7 0V9" stroke="var(--co2)" stroke-width="1.6" fill="var(--co2)" fill-opacity=".85"/></svg>
+  <div class="abs bar" id="coBar" style="left:654px;top:440px;height:66px;"></div>
+  <div class="abs pl" id="nmIn" style="left:688px;top:427px;color:var(--co2);font-size:15px">In</div>
+  <div class="abs n" id="vIn" style="left:688px;top:443px;font-size:40px;color:var(--co2);">-/</div>
+  <div class="abs n" id="vCo2" style="right:4px;top:405px;font-size:78px;color:var(--co2);">---</div>
+  <div class="abs pl" id="nmRr" style="left:678px;top:487px;color:var(--co2)">RR</div>
+  <div class="abs n" id="vRr" style="right:4px;top:474px;font-size:36px;color:var(--co2);">---</div>
+
+  <!-- 下の段 -->
+  <div class="abs hl" style="left:0;top:511px;width:800px;"></div>
+  <div class="abs pl" id="nmBp" style="left:2px;top:514px;color:var(--bp)">BP</div>
+  <canvas class="abs" id="cvBp" style="left:26px;top:514px;width:204px;height:85px;"></canvas>
+  <div class="abs n" id="bpTime" style="left:186px;top:516px;font-size:17px;color:#ffe400"></div>
+  <div class="abs t" style="left:243px;top:520px;font-size:16px;color:#fff">加圧値</div>
+  <div class="abs t" id="cuff" style="left:243px;top:542px;font-size:14px;color:#fff">210mmHg</div>
+  <div class="abs n" id="cuffNow" style="left:256px;top:562px;font-size:26px;color:#ffe400">---</div>
+  <div class="abs pl" id="nmSys" style="left:330px;top:530px;color:var(--bp);font-size:14px">SYS</div>
+  <div class="abs pl" id="nmDia" style="left:450px;top:530px;color:var(--bp);font-size:14px">DIA</div>
+  <div class="abs n" id="vBp" style="left:328px;top:540px;font-size:54px;color:var(--bp);width:160px;text-align:right;white-space:nowrap">---/---</div>
+  <div class="abs pl" id="nmMap" style="left:366px;top:585px;color:var(--bp);font-size:14px">MAP</div>
+  <div class="abs n" id="vMap" style="left:402px;top:581px;font-size:18px;color:var(--bp);">---</div>
+
+  <div class="abs vl" style="left:493px;top:511px;height:89px;"></div>
+  <div class="abs pl" id="nmTmp" style="left:498px;top:514px;color:var(--temp)">TEMP</div>
+  <div class="abs n" id="vTmp" style="left:496px;top:545px;font-size:44px;color:var(--temp);width:78px;text-align:center">---</div>
+
+  <div class="abs vl" style="left:575px;top:511px;height:89px;"></div>
+  <div class="abs pl" id="nmO2" style="left:580px;top:514px;color:var(--o2)">O<sub style="font-size:10px">2</sub></div>
+  <div class="abs n" id="vO2" style="left:578px;top:545px;font-size:44px;color:var(--o2);width:66px;text-align:right">---</div>
+
+  <div class="abs vl" style="left:645px;top:511px;height:89px;"></div>
+  <div class="abs pl" id="nmIso" style="left:650px;top:513px;color:var(--iso)">ISO</div>
+  <div class="abs pl" id="nmIsoIn" style="left:653px;top:530px;color:var(--iso);font-size:14px">In</div>
+  <div class="abs pl" id="nmIsoEx" style="left:776px;top:530px;color:var(--iso);font-size:14px">Ex</div>
+  <div class="abs n" id="vIso" style="left:648px;top:546px;font-size:48px;color:var(--iso);width:150px;text-align:right">---</div>
+</div>
+
+<div id="start" style="position:fixed;inset:0;background:rgba(0,0,0,.85);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:22px;z-index:10;font-family:'Hiragino Sans',sans-serif;">
+  <button id="startBtn" style="font-size:30px;padding:16px 40px;border-radius:14px;border:none;background:#2f7df6;color:#fff;font-weight:700;cursor:pointer;">クリックして開始</button>
+  <p style="color:#c9d3dc;font-size:17px;text-align:center;line-height:1.8">全画面になり、音が出るようになります。<br>（全画面をやめるときは esc キー）</p>
+  <div id="roomLab" style="font-size:15px;color:#8796a5"></div>
+</div>
+
+<script src="js/supabase.js"></script>
+<script src="js/config.js"></script>
+<script src="js/common.js"></script>
+<script src="js/monitor.js"></script>
+</body>
+</html>
